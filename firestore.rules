@@ -1,0 +1,83 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── IMPORTANT — set this to YOUR real admin account's UID ──
+    // 1. Phone-login once yourself inside the app (this creates your account).
+    // 2. Firebase Console -> Authentication -> Users -> copy your UID.
+    // 3. Paste it below, replacing "PASTE_YOUR_ADMIN_UID_HERE".
+    // Only this UID can approve/reject/feature/delete listings that belong
+    // to other people — an in-app admin passcode alone can't be checked by
+    // Firestore rules, so real moderation power is tied to this real account.
+    function isAdmin() {
+      return request.auth != null && request.auth.uid == "PASTE_YOUR_ADMIN_UID_HERE";
+    }
+
+    function onlyChanged(fields) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(fields);
+    }
+
+    // Anyone (even signed-out visitors) can browse approved listings.
+    // Only a signed-in user can create one, and it's always created as
+    // "pending" (enforced below) so nothing goes live without moderation,
+    // and it must be tagged with their own uid as the owner.
+    match /listings/{id} {
+      allow read: if true;
+      allow create: if request.auth != null
+                    && request.resource.data.ownerId == request.auth.uid
+                    && request.resource.data.status == "pending";
+
+      // The owner or admin can change anything on their own listing
+      // (edit details, approve/reject, feature, take down, etc).
+      allow update: if request.auth != null
+                    && (resource.data.ownerId == request.auth.uid || isAdmin());
+
+      // Anyone — even a signed-out visitor — can bump the view counter.
+      // Low-risk (just a display number), and requiring login here would
+      // break anonymous browsing analytics.
+      allow update: if onlyChanged(['views']);
+
+      // Anyone can bump the call-click counter for the same reason.
+      allow update: if onlyChanged(['callClicks']);
+
+      // Any signed-in visitor can add a review to someone else's listing,
+      // or flag it back to pending via the Report button — but nothing else.
+      allow update: if request.auth != null && onlyChanged(['reviews']);
+      allow update: if request.auth != null && onlyChanged(['status', 'reported']);
+
+      allow delete: if request.auth != null
+                    && (resource.data.ownerId == request.auth.uid || isAdmin());
+    }
+
+    match /services/{id} {
+      allow read: if true;
+      allow create: if request.auth != null
+                    && request.resource.data.ownerId == request.auth.uid
+                    && request.resource.data.status == "pending";
+      allow update, delete: if request.auth != null
+                    && (resource.data.ownerId == request.auth.uid || isAdmin());
+    }
+
+    // Saved/bookmarked listings — a user can only read/write their own
+    // saved-list document (doc id == their own uid).
+    match /saved_listings/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // My Rentals — self-reported "places I currently rent", used only for
+    // in-app due-date reminders. No money ever passes through this data —
+    // actual rent payment happens directly between tenant and owner via UPI
+    // (see ROOMWALA_UPI_ID / buildUpiLink in App.jsx) — so this is just a
+    // personal bookkeeping doc, same shape as saved_listings above.
+    match /rentals/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // App settings (admin passcode) — readable by any signed-in user,
+    // writable only by the real admin account.
+    match /settings/{doc} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+  }
+}

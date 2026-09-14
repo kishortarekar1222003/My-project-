@@ -1,0 +1,14 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Anyone can view photos (needed for public listing browsing).
+    // Only a signed-in user can upload, and only image files under 5MB —
+    // blocks random file types and oversized uploads from strangers.
+    match /listings/{listingId}/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null
+                   && request.resource.size < 5 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+    }
+  }
+}
